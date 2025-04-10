@@ -1,6 +1,6 @@
 flask
 flask-cors
-torch==2.2.0  # or whatever you're using
-torchvision
+torch==2.2.0+cpu
+torchvision==0.17.0+cpu
 Pillow
-opencv-python-headless  # Use this instead of `opencv-python` to save space
+opencv-python-headless
