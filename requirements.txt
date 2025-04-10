@@ -1,8 +1,6 @@
-flask==2.3.3
-flask-cors==4.0.0
-torch==2.2.1
-torchvision==0.17.1
-Pillow==10.2.0
-numpy==1.26.4
-opencv-python==4.9.0.80
-requests==2.31.0
+flask
+flask-cors
+torch==2.2.0  # or whatever you're using
+torchvision
+Pillow
+opencv-python-headless  # Use this instead of `opencv-python` to save space
