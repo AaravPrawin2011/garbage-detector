@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, render_template_string
+from flask_cors import CORS
 from PIL import Image
 import torch
 import torch.nn.functional as F
@@ -6,35 +7,41 @@ from torchvision.models import resnet18
 import torchvision.transforms as transforms
 import cv2
 import numpy as np
+import os
 import io
-import urllib.request
-import tempfile
+import requests
 
 app = Flask(__name__)
+CORS(app)
 
 # ================== CONFIGURATION ==================
 
-# Original class labels (as used during training)
+# Model URL and local save path
+MODEL_URL = "https://huggingface.co/Aarav2011/resnet18-garbage/resolve/main/resnet18_garbage.pth"
+MODEL_PATH = "resnet18_garbage.pth"
+
+# Download model if not present
+if not os.path.exists(MODEL_PATH):
+    print("Downloading model from Hugging Face...")
+    with open(MODEL_PATH, "wb") as f:
+        f.write(requests.get(MODEL_URL).content)
+
+# Original class labels used during training
 original_class_labels = ['battery', 'biological', 'cardboard', 'clothes', 'glass',
                          'metal', 'paper', 'plastic', 'shoes', 'trash']
 
-# Mapping:
-#   - "glass" will be converted to "metal"
-#   - "cardboard" and "paper" will be merged into "cardboard/paper"
+# Mapping for final API labels
 mapping = {
     "glass": "metal",
     "cardboard": "cardboard/paper",
     "paper": "cardboard/paper"
 }
 
-# Apply mapping on predicted label
 def map_label(pred_label):
     return mapping.get(pred_label, pred_label)
 
-# Updated final class labels used in API responses
 api_class_labels = [map_label(label) for label in original_class_labels]
 
-# Density values in g/cm³ (example values)
 CLASS_DENSITIES = {
     'battery': 2.5,
     'biological': 1.0,
@@ -46,21 +53,14 @@ CLASS_DENSITIES = {
     'trash': 0.5
 }
 
-PIXEL_TO_CM2 = 0.01  # conversion from pixel to cm²
-THICKNESS = 0.2      # assumed thickness in cm
+PIXEL_TO_CM2 = 0.01
+THICKNESS = 0.2
 
 # ================== MODEL SETUP ==================
 
-# Load model checkpoint from Hugging Face
-MODEL_URL = "https://huggingface.co/Aarav2011/resnet18-garbage/resolve/main/resnet18_garbage.pth"
-
-with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-    urllib.request.urlretrieve(MODEL_URL, tmp_file.name)
-    checkpoint = torch.load(tmp_file.name, map_location=torch.device('cpu'))
-
-# Load model architecture and weights
 model = resnet18(weights=None)
 model.fc = torch.nn.Linear(model.fc.in_features, len(original_class_labels))
+checkpoint = torch.load(MODEL_PATH, map_location=torch.device('cpu'))
 model.load_state_dict(checkpoint['model_state_dict'])
 model.eval()
 
@@ -110,20 +110,19 @@ def index():
     </body>
     </html>
     """
-    
     result = None
     if request.method == "POST":
         if "image" not in request.files:
             return jsonify({"error": "No image provided"}), 400
-        
+
         file = request.files["image"]
         try:
             image = Image.open(io.BytesIO(file.read())).convert("RGB")
         except Exception as e:
             return jsonify({"error": f"Error processing image: {str(e)}"}), 400
-        
+
         input_tensor = transform(image).unsqueeze(0)
-        
+
         with torch.no_grad():
             outputs = model(input_tensor)
             probs = F.softmax(outputs, dim=1)[0]
@@ -131,21 +130,22 @@ def index():
             predicted_label = original_class_labels[predicted_idx]
             final_label = map_label(predicted_label)
             confidence = probs[predicted_idx].item()
-        
+
         weight_estimate = estimate_weight(image, predicted_label)
         weight_str = f"{round(weight_estimate/1000, 2)} kg" if weight_estimate >= 1000 else f"{weight_estimate} g"
-        
+
         result = {
             "prediction": final_label,
             "confidence": f"{confidence * 100:.2f}%",
             "estimated_weight": weight_str
         }
-        
+
         return render_template_string(html_form, result=result)
-    
+
     return render_template_string(html_form)
 
 # ================== RUN APP ==================
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
